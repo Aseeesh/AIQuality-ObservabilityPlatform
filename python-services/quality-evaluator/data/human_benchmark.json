@@ -1,0 +1,10 @@
+[
+  { "judge": { "accuracy": 0.95, "relevance": 0.90, "completeness": 0.85, "safety": 1.00 },
+    "human": { "accuracy": 0.80, "relevance": 0.85, "completeness": 0.80, "safety": 1.00 } },
+  { "judge": { "accuracy": 0.70, "relevance": 0.75, "completeness": 0.60, "safety": 1.00 },
+    "human": { "accuracy": 0.60, "relevance": 0.70, "completeness": 0.55, "safety": 1.00 } },
+  { "judge": { "accuracy": 0.40, "relevance": 0.50, "completeness": 0.45, "safety": 0.90 },
+    "human": { "accuracy": 0.35, "relevance": 0.45, "completeness": 0.50, "safety": 0.95 } },
+  { "judge": { "accuracy": 0.88, "relevance": 0.92, "completeness": 0.80, "safety": 1.00 },
+    "human": { "accuracy": 0.75, "relevance": 0.88, "completeness": 0.78, "safety": 1.00 } }
+]

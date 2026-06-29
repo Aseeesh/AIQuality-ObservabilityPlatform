@@ -1,119 +1,164 @@
-"""LLM-as-judge: scores model outputs against rubrics.
+"""LLM-as-Judge evaluation system with calibration.
 
-Uses Anthropic Claude (default ``claude-opus-4-8``) when ``ANTHROPIC_API_KEY`` is
-set; otherwise falls back to a deterministic, dependency-free heuristic so the
-evaluator is runnable offline and in CI.
+Pipeline (see ``LLMJudge.evaluate``):
+
+    request ─▶ select rubric set
+            ─▶ run judge (Ollama ▸ Anthropic ▸ heuristic)   # raw per-rubric scores + evidence
+            ─▶ calibrate scores (bias correction + confidence)
+            ─▶ open-knowledge verification (grounding + citations)
+            ─▶ aggregate ▸ verdict ▸ record metrics
+            ─▶ EvaluationResult (scores, calibrated overall, confidence, evidence)
+
+The judge degrades gracefully: with a local Ollama server it uses a real model; with
+ANTHROPIC_API_KEY it uses Claude; with neither it uses the deterministic heuristic so the
+service still runs in CI. Calibration and knowledge checks apply regardless of backend.
 """
 from __future__ import annotations
 
-import os
-import re
-from dataclasses import dataclass, field
-from typing import Iterable
+import asyncio
+
+from .calibration import CalibrationService
+from .clients import AnthropicClient, OllamaClient
+from .config import (
+    EvaluationRequest,
+    EvaluationResult,
+    JudgeBackend,
+    JudgeConfig,
+    RubricScore,
+)
+from .knowledge import KnowledgeVerifier
+from .metrics import MetricCollector
+from .rubrics import RubricManager, RubricSet
+from .scoring import heuristic_scores, parse_judge_text
 
 
-@dataclass
-class Rubric:
-    name: str
-    description: str
-    scale: tuple[int, int] = (1, 5)
+class LLMJudge:
+    """LLM-as-Judge evaluation system with calibration."""
 
+    def __init__(self, config: JudgeConfig | None = None):
+        self.config = config or JudgeConfig()
+        self.ollama = OllamaClient(self.config.ollama_url, self.config.ollama_model)
+        self.anthropic = AnthropicClient(self.config.anthropic_model)
+        self.calibration = CalibrationService()
+        self.metrics = MetricCollector()
+        self.rubrics = RubricManager()
+        self.knowledge = KnowledgeVerifier()
 
-@dataclass
-class JudgeResult:
-    scores: dict[str, float] = field(default_factory=dict)
-    rationale: str = ""
+        if self.config.calibration_path:
+            # Fit bias/agreement corrections up front so every evaluation is calibrated.
+            self.calibration.fit_from_file(self.config.calibration_path)
+
+        self._backend = self._resolve_backend()
+
+    # ------------------------------------------------------------------ public
+    async def evaluate(self, request: EvaluationRequest) -> EvaluationResult:
+        """Evaluate output with the calibrated LLM judge."""
+        rubric_set = self.rubrics.get(request.rubric_set or self.config.rubric_set)
+
+        # Run the judge (optionally multiple times for self-consistency/variance).
+        raw_runs = [await self._judge_once(request, rubric_set) for _ in range(max(1, self.config.judge_repeats))]
+        raw = self._merge_runs(raw_runs, rubric_set)
+
+        # Calibrate + assemble per-rubric scores.
+        scores: list[RubricScore] = []
+        for r in rubric_set.rubrics:
+            raw_score, evidence = raw.get(r.name, (0.0, ""))
+            calibrated, confidence = self.calibration.calibrate(r.name, raw_score)
+            if len(raw_runs) > 1:  # blend in self-consistency when we have repeats
+                consistency = self.calibration.consistency([run.get(r.name, (0.0, ""))[0] for run in raw_runs])
+                confidence = (confidence + consistency) / 2
+            scores.append(RubricScore(r.name, raw_score, calibrated, confidence, r.weight, evidence))
+
+        # Open-knowledge verification.
+        knowledge = (
+            self.knowledge.verify(request.output, request.context, request.references)
+            if self.config.enable_knowledge_check else None
+        )
+
+        result = self._assemble(scores, knowledge)
+        self.metrics.record(result)
+        return result
+
+    def evaluate_sync(self, request: EvaluationRequest) -> EvaluationResult:
+        """Synchronous wrapper for scripts/tests/CI."""
+        return asyncio.run(self.evaluate(request))
 
     @property
-    def overall(self) -> float:
-        """Mean of per-rubric scores, already normalised to 0..1."""
-        if not self.scores:
-            return 0.0
-        return round(sum(self.scores.values()) / len(self.scores), 4)
+    def backend(self) -> str:
+        return self._backend.value
 
+    # ------------------------------------------------------------------ judging
+    async def _judge_once(self, request: EvaluationRequest, rubric_set: RubricSet) -> dict[str, tuple[float, str]]:
+        if self._backend in (JudgeBackend.OLLAMA, JudgeBackend.ANTHROPIC):
+            text = await asyncio.to_thread(self._call_model, request, rubric_set)
+            if text:
+                parsed = parse_judge_text(text, rubric_set)
+                if parsed:  # only trust a parse that produced at least one rubric score
+                    return parsed
+        # Fallback (or backend == heuristic).
+        return heuristic_scores(request, rubric_set)
 
-DEFAULT_RUBRICS: list[Rubric] = [
-    Rubric("helpfulness", "Does the response address the user's intent?"),
-    Rubric("faithfulness", "Is the response grounded in the provided context?"),
-    Rubric("conciseness", "Is the response free of filler and repetition?"),
-]
-
-
-class Judge:
-    """Scores an (input, output, context) triple against rubrics."""
-
-    def __init__(self, model: str | None = None, rubrics: Iterable[Rubric] | None = None):
-        self.model = model or os.getenv("JUDGE_MODEL", "claude-opus-4-8")
-        self.rubrics = list(rubrics or DEFAULT_RUBRICS)
-        self._client = self._make_client()
-
-    def _make_client(self):
-        key = os.getenv("ANTHROPIC_API_KEY")
-        if not key:
-            return None
-        try:
-            import anthropic  # type: ignore
-            return anthropic.Anthropic(api_key=key)
-        except Exception:
-            return None
-
-    def score(self, prompt: str, output: str, context: str = "") -> JudgeResult:
-        if self._client is not None:
-            return self._score_with_claude(prompt, output, context)
-        return self._score_heuristic(prompt, output, context)
-
-    # -- Claude-backed scoring ------------------------------------------------
-    def _score_with_claude(self, prompt: str, output: str, context: str) -> JudgeResult:
-        rubric_text = "\n".join(f"- {r.name}: {r.description} (scale {r.scale[0]}-{r.scale[1]})"
-                                for r in self.rubrics)
-        msg = self._client.messages.create(
-            model=self.model,
-            max_tokens=512,
-            system="You are a strict evaluation judge. Reply ONLY with lines of "
-                   "'<rubric>: <score>' then a one-line rationale.",
-            messages=[{
-                "role": "user",
-                "content": f"Rubrics:\n{rubric_text}\n\nContext:\n{context}\n\n"
-                           f"Prompt:\n{prompt}\n\nResponse:\n{output}",
-            }],
+    def _call_model(self, request: EvaluationRequest, rubric_set: RubricSet) -> str | None:
+        rubric_lines = "\n".join(
+            f"- {r.name}: {r.description} (score {r.scale[0]}-{r.scale[1]})" for r in rubric_set.rubrics
         )
-        text = "".join(b.text for b in msg.content if getattr(b, "type", "") == "text")
-        return self._parse(text)
+        system = (
+            "You are a strict, calibrated evaluation judge. Score each rubric on its stated "
+            "scale. Reply with one line per rubric formatted exactly as "
+            "'<rubric>: <score> - <one-line evidence>'. Do not add other text."
+        )
+        prompt = (
+            f"Rubrics:\n{rubric_lines}\n\n"
+            f"Context:\n{request.context or '(none)'}\n\n"
+            f"User prompt:\n{request.prompt}\n\n"
+            f"Model response to evaluate:\n{request.output}"
+        )
+        client = self.ollama if self._backend == JudgeBackend.OLLAMA else self.anthropic
+        return client.generate(prompt, system=system, temperature=self.config.temperature)
 
-    def _parse(self, text: str) -> JudgeResult:
-        scores: dict[str, float] = {}
-        rationale = ""
-        names = {r.name for r in self.rubrics}
-        for line in text.splitlines():
-            m = re.match(r"\s*([\w-]+)\s*:\s*([\d.]+)", line)
-            if m and m.group(1).lower() in names:
-                lo, hi = next(r.scale for r in self.rubrics if r.name == m.group(1).lower())
-                scores[m.group(1).lower()] = (float(m.group(2)) - lo) / (hi - lo)
-            elif line.strip():
-                rationale = line.strip()
-        return JudgeResult(scores=scores, rationale=rationale or "judged by claude")
+    # ------------------------------------------------------------------ helpers
+    def _resolve_backend(self) -> JudgeBackend:
+        cfg = self.config.backend
+        if cfg != JudgeBackend.AUTO:
+            return cfg
+        if self.ollama.is_available():
+            return JudgeBackend.OLLAMA
+        if self.anthropic.is_available():
+            return JudgeBackend.ANTHROPIC
+        return JudgeBackend.HEURISTIC
 
-    # -- Offline heuristic fallback ------------------------------------------
-    def _score_heuristic(self, prompt: str, output: str, context: str) -> JudgeResult:
-        out = output.strip()
-        words = out.split()
-        prompt_terms = {w.lower() for w in re.findall(r"\w+", prompt) if len(w) > 3}
-        ctx_terms = {w.lower() for w in re.findall(r"\w+", context) if len(w) > 3}
-        out_terms = {w.lower() for w in re.findall(r"\w+", out)}
+    @staticmethod
+    def _merge_runs(runs: list[dict[str, tuple[float, str]]], rubric_set: RubricSet) -> dict[str, tuple[float, str]]:
+        """Average scores across repeated judge runs, keeping the first run's evidence."""
+        merged: dict[str, tuple[float, str]] = {}
+        for r in rubric_set.rubrics:
+            vals = [run[r.name] for run in runs if r.name in run]
+            if vals:
+                avg = sum(v[0] for v in vals) / len(vals)
+                merged[r.name] = (avg, vals[0][1])
+        return merged
 
-        def overlap(a: set[str]) -> float:
-            return len(a & out_terms) / len(a) if a else 1.0
+    def _assemble(self, scores: list[RubricScore], knowledge) -> EvaluationResult:
+        total_w = sum(s.weight for s in scores) or 1.0
+        overall = sum(s.raw_score * s.weight for s in scores) / total_w
+        calibrated = sum(s.calibrated_score * s.weight for s in scores) / total_w
+        confidence = sum(s.confidence for s in scores) / len(scores) if scores else 0.0
 
-        helpfulness = min(1.0, 0.4 + overlap(prompt_terms) * 0.6) if out else 0.0
-        faithfulness = overlap(ctx_terms) if ctx_terms else (0.7 if out else 0.0)
-        # Conciseness peaks around 60 words, decays for very long answers.
-        conciseness = max(0.0, 1.0 - abs(len(words) - 60) / 200) if words else 0.0
+        # A failed grounding check caps the verdict at Warning regardless of rubric scores.
+        knowledge_ok = knowledge is None or (knowledge.support_ratio >= 0.5 and knowledge.citations_valid)
+        if calibrated >= self.config.pass_threshold and knowledge_ok:
+            verdict = "Passed"
+        elif calibrated >= self.config.warn_threshold:
+            verdict = "Warning"
+        else:
+            verdict = "Failed"
 
-        candidates = {
-            "helpfulness": round(helpfulness, 4),
-            "faithfulness": round(faithfulness, 4),
-            "conciseness": round(conciseness, 4),
-        }
-        names = {r.name for r in self.rubrics}
-        scores = {k: v for k, v in candidates.items() if k in names}
-        return JudgeResult(scores=scores, rationale="heuristic (no ANTHROPIC_API_KEY)")
+        evidence = [s.evidence for s in scores if s.evidence]
+        return EvaluationResult(
+            scores=scores, overall=overall, calibrated_overall=calibrated, confidence=confidence,
+            verdict=verdict, judge_backend=self._backend.value, knowledge=knowledge, evidence=evidence,
+        )
+
+
+# Backwards-compatible alias for earlier call sites.
+Judge = LLMJudge
