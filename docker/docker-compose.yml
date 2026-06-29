@@ -28,10 +28,20 @@ services:
     image: grafana/grafana:latest
     ports: ["3001:3000"]
 
+  # Jaeger all-in-one: OTLP collector (4317/4318) + trace UI (16686).
+  jaeger:
+    image: jaegertracing/all-in-one:1.62
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686", "4317:4317", "4318:4318"]
+
   api:
     build: ../backend/AIQuality.API
     env_file: ../.env
-    depends_on: [postgres, redis, rabbitmq]
+    environment:
+      # Export spans to the Jaeger OTLP/gRPC endpoint inside the compose network.
+      OpenTelemetry__Endpoint: http://jaeger:4317
+    depends_on: [postgres, redis, rabbitmq, jaeger]
     ports: ["8080:8080"]
 
 volumes:
