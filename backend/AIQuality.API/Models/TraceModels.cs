@@ -1,6 +1,5 @@
 namespace AIQuality.API.Models;
 
-// Trace and span request/response contracts.
 // DTOs / request-response contracts for the Trace domain.
-public record TraceRequest();
-public record TraceResponse();
+public record StartTraceRequest(string Name, string Model);
+public record CompleteTraceRequest(long DurationMs, double? QualityScore);
