@@ -1,0 +1,37 @@
+# Dev overlay: hot reload, source mounts, and Python services in watch mode.
+name: aiquality
+services:
+  api:
+    build:
+      context: ../backend/AIQuality.API
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+    volumes: ["../backend:/src"]
+
+  quality-evaluator:
+    build: ../python-services/quality-evaluator
+    env_file: ../.env
+
+  anomaly-detector:
+    build: ../python-services/anomaly-detector
+    env_file: ../.env
+
+  automated-rca:
+    build: ../python-services/automated-rca
+    env_file: ../.env
+
+  feedback-processor:
+    build: ../python-services/feedback-processor
+    env_file: ../.env
+
+  mcp-integration:
+    build: ../python-services/mcp-integration
+    env_file: ../.env
+    ports: ["9000:9000"]
+
+  frontend:
+    image: node:22
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host"
+    volumes: ["../frontend/quality-platform:/app"]
+    ports: ["5173:5173"]

@@ -1,0 +1,13 @@
+# Production overlay: pre-built images, restart policies, no source mounts.
+name: aiquality
+services:
+  api:
+    image: aiquality/api:latest
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+
+  frontend:
+    image: aiquality/frontend:latest
+    restart: unless-stopped
+    ports: ["80:80"]

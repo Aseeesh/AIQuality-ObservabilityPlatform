@@ -1,0 +1,38 @@
+# Base compose stack: shared infrastructure + core services.
+# Overlay with docker-compose.dev.yml or docker-compose.prod.yml.
+name: aiquality
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-aiquality}
+      POSTGRES_USER: ${POSTGRES_USER:-aiquality}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aiquality}
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+
+  redis:
+    image: redis:7
+    ports: ["6379:6379"]
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports: ["5672:5672", "15672:15672"]
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes: ["../config/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml"]
+    ports: ["9090:9090"]
+
+  grafana:
+    image: grafana/grafana:latest
+    ports: ["3001:3000"]
+
+  api:
+    build: ../backend/AIQuality.API
+    env_file: ../.env
+    depends_on: [postgres, redis, rabbitmq]
+    ports: ["8080:8080"]
+
+volumes:
+  pgdata:

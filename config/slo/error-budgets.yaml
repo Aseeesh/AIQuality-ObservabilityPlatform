@@ -1,0 +1,9 @@
+# Error-budget policy tied to the SLOs.
+error_budgets:
+  - slo: api-availability
+    budget: 0.001          # 0.1% over the window
+    burn_alerts:
+      - rate: 14.4         # fast burn (1h)
+        severity: page
+      - rate: 6            # slow burn (6h)
+        severity: ticket

@@ -1,0 +1,12 @@
+# Eval Automation — scheduled offline evaluation runs against calibration sets.
+name: eval-automation
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/run-evaluation.sh --config config/quality/evaluation-rubrics.yaml

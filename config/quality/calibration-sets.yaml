@@ -1,0 +1,5 @@
+# Gold/calibration examples used to calibrate judge scoring.
+calibration_sets:
+  - name: baseline-v1
+    path: tests/quality-validation/baseline-v1.jsonl
+    size: 100

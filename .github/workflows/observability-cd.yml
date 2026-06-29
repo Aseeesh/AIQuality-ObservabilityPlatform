@@ -1,0 +1,13 @@
+# Observability CD — build/push images and roll out the observability stack.
+name: observability-cd
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO: docker build & push backend + python services"
+      - run: echo "TODO: terraform apply / kubectl rollout"

@@ -1,0 +1,8 @@
+# Rubrics the LLM judge uses to score outputs.
+rubrics:
+  - name: helpfulness
+    scale: [1, 5]
+    description: Does the response fully address the user's intent?
+  - name: faithfulness
+    scale: [1, 5]
+    description: Is the response grounded in the provided context?

@@ -1,0 +1,10 @@
+# Service-level objectives for the platform.
+slos:
+  - name: api-availability
+    sli: successful_requests / total_requests
+    objective: 0.999
+    window: 30d
+  - name: eval-latency
+    sli: p95_eval_latency_ms
+    objective: 2000
+    window: 7d

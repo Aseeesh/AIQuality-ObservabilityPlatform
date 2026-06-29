@@ -1,0 +1,10 @@
+# Quality gates enforced in CI and at runtime.
+gates:
+  - name: faithfulness
+    metric: faithfulness_score
+    threshold: 0.85
+    on_fail: block
+  - name: relevance
+    metric: relevance_score
+    threshold: 0.80
+    on_fail: warn

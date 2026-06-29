@@ -1,0 +1,12 @@
+# Incident Response — triggered automation that opens/updates incidents and runs RCA.
+name: incident-response
+on:
+  repository_dispatch:
+    types: [incident-detected]
+  workflow_dispatch:
+jobs:
+  respond:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "TODO: invoke automated-rca service and notify on-call"

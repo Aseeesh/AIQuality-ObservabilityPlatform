@@ -1,0 +1,27 @@
+# .NET
+bin/
+obj/
+*.user
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+# Node
+node_modules/
+dist/
+.vite/
+# Env & secrets
+.env
+*.local
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+# Logs
+*.log

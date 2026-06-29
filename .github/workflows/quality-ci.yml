@@ -1,0 +1,33 @@
+# Quality CI — build, test, lint, and enforce quality gates on every PR.
+name: quality-ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - run: dotnet restore backend
+      - run: dotnet build backend --no-restore -c Release
+      - run: dotnet test backend --no-build -c Release
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r python-services/quality-evaluator/requirements.txt
+      - run: echo "TODO: pytest python-services"
+  quality-gate:
+    needs: [backend, python]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/deploy-quality-gates.sh --check config/quality/quality-gates.yaml
