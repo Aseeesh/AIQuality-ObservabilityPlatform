@@ -19,6 +19,10 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt => opt.UseInMemoryDataba
 builder.Services.AddScoped<ITracingService, AIQuality.Infrastructure.Services.TracingService>();  // coarse trace records (EF)
 // Span-level distributed tracing holds an in-memory query store, so it must be a singleton.
 builder.Services.AddSingleton<IDistributedTracingService, AIQuality.API.Services.TracingService>();
+// Evaluation: default heuristic scorer (swap for the Python LLM judge in prod); the service
+// keeps an in-memory run history for regression detection, so it is a singleton.
+builder.Services.AddSingleton<IOutputEvaluator, AIQuality.API.Services.HeuristicOutputEvaluator>();
+builder.Services.AddSingleton<IEvaluationService, AIQuality.API.Services.EvaluationService>();
 
 // ---- OpenTelemetry tracing ----
 // Head-based sampling is configured here (ParentBased + TraceIdRatioBased). The span query
