@@ -23,6 +23,8 @@ builder.Services.AddSingleton<IDistributedTracingService, AIQuality.API.Services
 // keeps an in-memory run history for regression detection, so it is a singleton.
 builder.Services.AddSingleton<IOutputEvaluator, AIQuality.API.Services.HeuristicOutputEvaluator>();
 builder.Services.AddSingleton<IEvaluationService, AIQuality.API.Services.EvaluationService>();
+// Improvement pipeline reads the evaluation history (singleton) to plan changes.
+builder.Services.AddSingleton<IImprovementService, AIQuality.API.Services.ImprovementService>();
 
 // ---- OpenTelemetry tracing ----
 // Head-based sampling is configured here (ParentBased + TraceIdRatioBased). The span query
