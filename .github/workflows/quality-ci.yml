@@ -32,7 +32,10 @@ jobs:
         with:
           python-version: "3.12"
       # The suites are stdlib-only (model/HTTP backends are optional + guarded), so no install.
-      - run: ./scripts/run-python-tests.sh
+      - name: Per-service unit suites
+        run: ./scripts/run-python-tests.sh
+      - name: Cross-cutting framework (quality-validation, integration, performance, e2e)
+        run: ./tests/run-tests.sh
 
   frontend:
     name: frontend (Vite build + typecheck)
