@@ -1,13 +1,65 @@
-# Observability CD — build/push images and roll out the observability stack.
+# Observability CD — produce deployable artifacts and validate the runtime stack on main.
+# Publishes the API, builds the frontend bundle, and validates the docker-compose stacks.
+# (Image push / terraform apply are environment-gated and left as deploy steps.)
 name: observability-cd
 on:
   push:
     branches: [main]
     tags: ["v*"]
 jobs:
-  deploy:
+  publish-api:
+    name: publish backend API
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO: docker build & push backend + python services"
-      - run: echo "TODO: terraform apply / kubectl rollout"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+      - run: dotnet publish backend/AIQuality.API/AIQuality.API.csproj -c Release -o publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-publish
+          path: publish
+
+  build-frontend:
+    name: build frontend bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: frontend/quality-platform
+      - run: npm run build
+        working-directory: frontend/quality-platform
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/quality-platform/dist
+
+  validate-stack:
+    name: validate compose stacks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cp .env.example .env
+      - name: Validate base + dev + prod compose
+        run: |
+          docker compose -f docker/docker-compose.yml config -q
+          docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml config -q
+          docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml config -q
+          echo "compose stacks valid"
+
+  deploy:
+    name: deploy
+    needs: [publish-api, build-frontend, validate-stack]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      # Gated on a version tag. Production wiring:
+      #   - docker build & push backend + python service images to the registry
+      #   - terraform apply infrastructure/terraform
+      #   - kubectl rollout / docker compose -f docker-compose.prod.yml up -d
+      - run: echo "Deploy step runs on version tags (registry + terraform credentials required)."

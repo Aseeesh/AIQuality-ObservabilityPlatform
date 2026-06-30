@@ -1,4 +1,7 @@
 # Incident Response — triggered automation that opens/updates incidents and runs RCA.
+# Fired by a repository_dispatch (type: incident-detected) carrying the incident payload, or
+# manually. Runs the automated-RCA service over the incident evidence and exercises the
+# MCP incident-response automation (create -> RCA -> escalate -> recommend).
 name: incident-response
 on:
   repository_dispatch:
@@ -6,7 +9,30 @@ on:
   workflow_dispatch:
 jobs:
   respond:
+    name: automated RCA + response
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: echo "TODO: invoke automated-rca service and notify on-call"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate RCA + incident-response automation
+        run: |
+          python python-services/automated-rca/tests/test_rca.py
+          python python-services/mcp-integration/tests/test_automations.py
+      - name: Run incident-response automation on the dispatched payload
+        env:
+          PAYLOAD: ${{ toJSON(github.event.client_payload) }}
+        run: |
+          cd python-services/mcp-integration
+          python - <<'PY'
+          import json, os
+          from mcp import build_server
+          from mcp.automations import QualityAutomation, Trigger
+          payload = json.loads(os.environ.get("PAYLOAD") or "{}")
+          payload.setdefault("title", "incident-detected (CI)")
+          payload.setdefault("severity", "P2")
+          qa = QualityAutomation(build_server())
+          for r in qa.execute_sync(Trigger("anomaly_detected", payload=payload)):
+              print(json.dumps(r.as_dict(), indent=2, default=str))
+          PY

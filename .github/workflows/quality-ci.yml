@@ -7,26 +7,49 @@ on:
     branches: [main]
 jobs:
   backend:
+    name: backend (.NET 9 build + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "9.0.x"
-      - run: dotnet restore backend
-      - run: dotnet build backend --no-restore -c Release
-      - run: dotnet test backend --no-build -c Release
+      - run: dotnet restore backend/AIQuality.sln
+      - run: dotnet build backend/AIQuality.sln --no-restore -c Release
+      - run: dotnet test backend/AIQuality.sln --no-build -c Release --logger "trx;LogFileName=test.trx"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dotnet-test-results
+          path: "**/TestResults/*.trx"
+
   python:
+    name: python services (stdlib test suites)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r python-services/quality-evaluator/requirements.txt
-      - run: echo "TODO: pytest python-services"
+      # The suites are stdlib-only (model/HTTP backends are optional + guarded), so no install.
+      - run: ./scripts/run-python-tests.sh
+
+  frontend:
+    name: frontend (Vite build + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci
+        working-directory: frontend/quality-platform
+      - run: npm run build
+        working-directory: frontend/quality-platform
+
   quality-gate:
-    needs: [backend, python]
+    name: quality gate
+    needs: [backend, python, frontend]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
