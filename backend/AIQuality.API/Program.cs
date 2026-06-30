@@ -25,6 +25,15 @@ builder.Services.AddSingleton<IOutputEvaluator, AIQuality.API.Services.Heuristic
 builder.Services.AddSingleton<IEvaluationService, AIQuality.API.Services.EvaluationService>();
 // Improvement pipeline reads the evaluation history (singleton) to plan changes.
 builder.Services.AddSingleton<IImprovementService, AIQuality.API.Services.ImprovementService>();
+// SLO tracking keeps rolling SLI windows in memory, so it is a singleton.
+builder.Services.AddSingleton<ISLOService, AIQuality.API.Services.SLOService>();
+// Incident management: notification channels (fanned out by severity) + the service (singleton,
+// in-memory incident store; uses the tracing analyzer for automated RCA).
+builder.Services.AddSingleton<INotificationChannel, AIQuality.API.Services.Notifications.PagerDutyChannel>();
+builder.Services.AddSingleton<INotificationChannel, AIQuality.API.Services.Notifications.OpsGenieChannel>();
+builder.Services.AddSingleton<INotificationChannel, AIQuality.API.Services.Notifications.SlackChannel>();
+builder.Services.AddSingleton<INotificationChannel, AIQuality.API.Services.Notifications.EmailChannel>();
+builder.Services.AddSingleton<IIncidentService, AIQuality.API.Services.IncidentService>();
 
 // ---- OpenTelemetry tracing ----
 // Head-based sampling is configured here (ParentBased + TraceIdRatioBased). The span query
