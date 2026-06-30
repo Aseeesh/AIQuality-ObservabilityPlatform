@@ -41,6 +41,17 @@ class QualityMCPServer:
         self.tools.register_all(build_monitoring_tools(self.monitoring_provider))
         self.tools.register_all(build_incident_tools(self.incident_provider))
         self._register_default_automations()
+
+        # AI-powered quality automations (gate / monitoring / improvement / incident),
+        # exposed as MCP tools (list_automations, run_automation).
+        from .automations import QualityAutomation
+        from .config import ToolSpec
+        self.quality_automation = QualityAutomation(self)
+        for tool in self.quality_automation.automation_tools():
+            self.tools.register(ToolSpec(
+                name=tool["name"], description=tool["description"],
+                input_schema=tool["input_schema"], handler=tool["handler"], category="automation"))
+
         self._started = True
         return self
 
