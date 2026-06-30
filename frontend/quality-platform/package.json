@@ -10,7 +10,9 @@
   },
   "dependencies": {
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "recharts": "^2.13.3",
+    "zustand": "^5.0.2"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",
