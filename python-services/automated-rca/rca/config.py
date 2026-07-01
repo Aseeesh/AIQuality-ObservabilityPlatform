@@ -80,6 +80,12 @@ class RCAConfig:
     ollama_model: str = "llama3.1"
     anthropic_model: str = "claude-opus-4-8"
 
+    def __post_init__(self):
+        import os
+        # Env overrides so RCA narratives use the local Ollama model in Docker.
+        self.ollama_url = os.getenv("OLLAMA_URL", self.ollama_url)
+        self.ollama_model = os.getenv("JUDGE_MODEL", self.ollama_model)
+
 
 # ---- Analysis outputs ----
 @dataclass

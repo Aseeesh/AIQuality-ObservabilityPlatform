@@ -1,13 +1,24 @@
-# Production overlay: pre-built images, restart policies, no source mounts.
+# Production overlay: restart policies + production env. Still builds from source (swap the
+# `build:` blocks for pre-pushed `image:` refs once you publish to a registry).
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d
 name: aiquality
 services:
   api:
-    image: aiquality/api:latest
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production
 
   frontend:
-    image: aiquality/frontend:latest
     restart: unless-stopped
-    ports: ["80:80"]
+
+  quality-evaluator:
+    restart: unless-stopped
+
+  anomaly-detector:
+    restart: unless-stopped
+
+  automated-rca:
+    restart: unless-stopped
+
+  feedback-processor:
+    restart: unless-stopped

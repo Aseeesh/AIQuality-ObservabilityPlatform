@@ -19,9 +19,23 @@ builder.Services.AddDbContext<ApplicationDbContext>(opt => opt.UseInMemoryDataba
 builder.Services.AddScoped<ITracingService, AIQuality.Infrastructure.Services.TracingService>();  // coarse trace records (EF)
 // Span-level distributed tracing holds an in-memory query store, so it must be a singleton.
 builder.Services.AddSingleton<IDistributedTracingService, AIQuality.API.Services.TracingService>();
-// Evaluation: default heuristic scorer (swap for the Python LLM judge in prod); the service
-// keeps an in-memory run history for regression detection, so it is a singleton.
-builder.Services.AddSingleton<IOutputEvaluator, AIQuality.API.Services.HeuristicOutputEvaluator>();
+// Evaluation scorer. When EVALUATOR_URL is set, use the Python quality-evaluator (Ollama-backed
+// LLM-as-Judge) over HTTP, with the local heuristic as an automatic fallback; otherwise use the
+// heuristic directly. The evaluation service keeps an in-memory run history, so it is a singleton.
+builder.Services.AddSingleton<AIQuality.API.Services.HeuristicOutputEvaluator>();
+var evaluatorUrl = builder.Configuration["EVALUATOR_URL"] ?? Environment.GetEnvironmentVariable("EVALUATOR_URL");
+if (!string.IsNullOrWhiteSpace(evaluatorUrl))
+{
+    builder.Services.AddSingleton<IOutputEvaluator>(sp => new AIQuality.API.Services.OllamaOutputEvaluator(
+        new HttpClient { Timeout = TimeSpan.FromSeconds(120) },  // LLM calls can be slow locally
+        sp.GetRequiredService<AIQuality.API.Services.HeuristicOutputEvaluator>(),
+        evaluatorUrl));
+}
+else
+{
+    builder.Services.AddSingleton<IOutputEvaluator>(sp =>
+        sp.GetRequiredService<AIQuality.API.Services.HeuristicOutputEvaluator>());
+}
 builder.Services.AddSingleton<IEvaluationService, AIQuality.API.Services.EvaluationService>();
 // Improvement pipeline reads the evaluation history (singleton) to plan changes.
 builder.Services.AddSingleton<IImprovementService, AIQuality.API.Services.ImprovementService>();

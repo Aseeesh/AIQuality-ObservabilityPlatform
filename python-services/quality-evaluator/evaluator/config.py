@@ -5,6 +5,7 @@ model backend installed — see ``JudgeConfig.backend == "heuristic"``.
 """
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -37,6 +38,16 @@ class JudgeConfig:
     enable_knowledge_check: bool = True
     calibration_path: str | None = None  # JSON file of human-labelled examples
     judge_repeats: int = 1             # >1 enables self-consistency / variance measurement
+
+    def __post_init__(self):
+        # Environment overrides so the same config works in Docker (Ollama at http://ollama:11434)
+        # without code changes. JUDGE_BACKEND forces a backend; otherwise AUTO probes at runtime.
+        self.ollama_url = os.getenv("OLLAMA_URL", self.ollama_url)
+        self.ollama_model = os.getenv("JUDGE_MODEL", self.ollama_model)
+        self.anthropic_model = os.getenv("ANTHROPIC_MODEL", self.anthropic_model)
+        backend = os.getenv("JUDGE_BACKEND")
+        if backend:
+            self.backend = JudgeBackend(backend.lower())
 
 
 @dataclass

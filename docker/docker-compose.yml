@@ -1,7 +1,24 @@
-# Base compose stack: shared infrastructure + core services.
-# Overlay with docker-compose.dev.yml or docker-compose.prod.yml.
+# Full local stack: Ollama + infrastructure + .NET API + Python services + frontend.
+# Run with `make up` (from the repo root). No .env required — every value has a default.
+#
+# Ports (host): frontend 3000 · api 8080 · ollama 11434 · jaeger 16686 · prometheus 9090
+#   grafana 3001 · quality-evaluator 8001 · anomaly-detector 8002 · automated-rca 8003
+#   feedback-processor 8004 · postgres 5432 · redis 6379 · rabbitmq 5672/15672
 name: aiquality
+
 services:
+  # ---- Local LLM (the judge/RCA backend) ----
+  ollama:
+    image: ollama/ollama:latest
+    ports: ["11434:11434"]
+    volumes: ["ollama-data:/root/.ollama"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  # ---- Infrastructure ----
   postgres:
     image: postgres:16
     environment:
@@ -26,6 +43,8 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
     ports: ["3001:3000"]
 
   # Jaeger all-in-one: OTLP collector (4317/4318) + trace UI (16686).
@@ -35,14 +54,54 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     ports: ["16686:16686", "4317:4317", "4318:4318"]
 
-  api:
-    build: ../backend/AIQuality.API
-    env_file: ../.env
+  # ---- Python services ----
+  quality-evaluator:
+    build: ../python-services/quality-evaluator
     environment:
-      # Export spans to the Jaeger OTLP/gRPC endpoint inside the compose network.
-      OpenTelemetry__Endpoint: http://jaeger:4317
-    depends_on: [postgres, redis, rabbitmq, jaeger]
+      OLLAMA_URL: http://ollama:11434
+      JUDGE_MODEL: ${JUDGE_MODEL:-llama3.2}
+      JUDGE_BACKEND: ${JUDGE_BACKEND:-auto}   # auto: Ollama if reachable, else heuristic
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports: ["8001:8000"]
+    depends_on: [ollama]
+
+  anomaly-detector:
+    build: ../python-services/anomaly-detector
+    ports: ["8002:8000"]
+
+  automated-rca:
+    build: ../python-services/automated-rca
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      JUDGE_MODEL: ${JUDGE_MODEL:-llama3.2}
+    ports: ["8003:8000"]
+    depends_on: [ollama]
+
+  feedback-processor:
+    build: ../python-services/feedback-processor
+    ports: ["8004:8000"]
+
+  # ---- .NET API ----
+  api:
+    build:
+      context: ../backend
+      dockerfile: AIQuality.API/Dockerfile
+    environment:
+      OpenTelemetry__Endpoint: http://jaeger:4317      # export spans to Jaeger
+      EVALUATOR_URL: http://quality-evaluator:8000      # quality gates use the Ollama judge
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-aiquality};Username=${POSTGRES_USER:-aiquality};Password=${POSTGRES_PASSWORD:-aiquality}
     ports: ["8080:8080"]
+    depends_on: [postgres, redis, rabbitmq, jaeger, quality-evaluator]
+
+  # ---- Frontend (nginx-served bundle) ----
+  frontend:
+    build:
+      context: ../frontend/quality-platform
+      args:
+        VITE_API_BASE: http://localhost:8080
+    ports: ["3000:80"]
+    depends_on: [api]
 
 volumes:
   pgdata:
+  ollama-data:

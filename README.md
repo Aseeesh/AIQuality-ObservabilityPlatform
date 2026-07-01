@@ -137,31 +137,61 @@ without manual labelling.
 
 ---
 
-## 6. Quick start
+## 6. Quick start — run locally with Docker + Ollama
 
-**Prerequisites:** Docker + Docker Compose; (optional for local dev) .NET 9 SDK, Node 22, Python
-3.12. An `ANTHROPIC_API_KEY` is optional — everything runs offline on the heuristic backend.
+**Prerequisites:** Docker + Docker Compose. Everything else (Ollama, .NET, Python, Node) runs in
+containers. ~8 GB free disk for images + the local model. `ANTHROPIC_API_KEY` is optional — the
+judge uses **local Ollama** by default and falls back to an offline heuristic if no model is
+pulled.
 
 ```bash
-# 1. Configure
-cp .env.example .env
-
-# 2. Start the stack (postgres, redis, rabbitmq, prometheus, grafana, jaeger, api)
-make up
-
-# 3. Run an evaluation pass
-make eval                       # -> python -m evaluator.runner
-
-# 4. Run the tests (offline, no installs)
-dotnet test backend/AIQuality.sln
-./scripts/run-python-tests.sh
-./tests/run-tests.sh
+# One command: build images, start the stack, pull the Ollama model, and smoke-test it.
+make start
 ```
 
-Dashboard (dev): `make dev` then open http://localhost:5173. Jaeger http://localhost:16686,
-Grafana http://localhost:3001. See [docs/operations](docs/operations/README.md).
+Or step by step:
 
-**First evaluation (no stack needed):**
+```bash
+make up                         # build + start all 13 services (Ollama, infra, API, Python, UI)
+make ollama-pull                # pull the local model (default llama3.2 ~2GB) into Ollama
+make smoke                      # verify the whole stack end-to-end
+```
+
+Then open:
+
+| What | URL |
+| --- | --- |
+| **Dashboard** | http://localhost:3000 |
+| API | http://localhost:8080 |
+| Quality-evaluator (judge) | http://localhost:8001/health |
+| Jaeger (traces) | http://localhost:16686 |
+| Grafana | http://localhost:3001 |
+
+Use a different local model (e.g. a bigger/smaller one):
+
+```bash
+make ollama-pull JUDGE_MODEL=llama3.1     # or qwen2.5:0.5b for a fast, tiny judge
+make up JUDGE_MODEL=llama3.1              # restart services pointing at it
+```
+
+`make smoke` prints, among other checks, **which backend the judge is using** — `ollama` once a
+model is pulled, otherwise `heuristic`. The .NET quality gates call the Ollama judge over HTTP
+(`EVALUATOR_URL`), so evaluation runs against the real local model end-to-end.
+
+### Run the tests
+
+```bash
+make test              # everything: .NET (31) + Python unit (50) + framework (10)
+# or individually:
+make test-dotnet       # dotnet test backend/AIQuality.sln
+make test-python       # ./scripts/run-python-tests.sh
+make test-framework    # ./tests/run-tests.sh
+```
+
+The test suites are **offline** (no Docker, no model, no network) — stdlib-only Python and
+in-memory .NET. `make help` lists every target. Hot-reload dev UI: `make dev` → http://localhost:5173.
+
+**First evaluation without Docker:**
 
 ```bash
 cd python-services/quality-evaluator && python3 -m evaluator.runner
@@ -171,42 +201,45 @@ cd python-services/quality-evaluator && python3 -m evaluator.runner
 
 ## 7. Demo scenarios
 
-Each is a one-liner against the running API (`http://localhost:5099`). These double as **demo
-video scripts** — narrate the bolded outcome.
+With the stack up (`make up`), each is a one-liner against the API at **`http://localhost:8080`**
+(`make smoke` runs all of these for you). These double as **demo video scripts** — narrate the
+bolded outcome.
 
 **A. Run a quality evaluation** → *a regression is caught and the CI gate fails (422).*
 ```bash
-curl -X POST localhost:5099/api/evaluation/demo            # baseline 0.77 vs regressed 0.43, t=-20.4
+curl -X POST localhost:8080/api/evaluation/demo            # baseline 0.77 vs regressed 0.43, t=-20.4
 ```
 
 **B. Trace an AI workflow** → *waterfall + per-trace root cause.*
 ```bash
-curl -X POST localhost:5099/api/spans/demo                 # seeds a healthy + a failing trace
-curl localhost:5099/api/spans/profile                      # p50/p95/p99 per operation
+curl -X POST localhost:8080/api/spans/demo                 # seeds a healthy + a failing trace
+curl localhost:8080/api/spans/profile                      # p50/p95/p99 per operation (also in Jaeger)
 ```
 
-**C. Monitor quality in real time** → *anomaly fires P1 with escalation + self-healing.*
+**C. Monitor quality in real time** → *an injected drop is flagged anomalous.*
 ```bash
-cd python-services/anomaly-detector && python3 -c "
-from detector import QualityMonitor, QualityMetric
-m=QualityMonitor()
-[m.monitor_sync(QualityMetric('quality-score',0.9)) for _ in range(25)]
-print(m.monitor_sync(QualityMetric('quality-score',0.18)).as_dict())"
+# Build a baseline then send a spike to the anomaly-detector service (port 8002):
+for i in $(seq 1 25); do curl -s -XPOST localhost:8002/monitor -H 'Content-Type: application/json' \
+  -d '{"name":"quality-score","value":0.9}' >/dev/null; done
+curl -XPOST localhost:8002/monitor -H 'Content-Type: application/json' \
+  -d '{"name":"quality-score","value":0.18}'                # is_anomaly=true + alerts + self-healing
 ```
 
-**D. Respond to an incident** → *severity classified, all channels paged, RCA at 0.9 confidence.*
+**D. Respond to an incident** → *severity classified, channels paged, RCA at 0.9 confidence.*
 ```bash
-INC=$(curl -s -X POST localhost:5099/api/incidents/demo)   # auto-RCA from the linked trace
+INC=$(curl -s -X POST localhost:8080/api/incidents/demo)   # auto-RCA from the linked trace
 ID=$(echo "$INC" | python3 -c "import sys,json;print(json.load(sys.stdin)['incident']['id'])")
-curl localhost:5099/api/incidents/$ID/postmortem
+curl localhost:8080/api/incidents/$ID/postmortem
 ```
 
 **E. Improve the model from feedback** → *feedback → eval case → improvement plan + canary.*
 ```bash
-curl -X POST localhost:5099/api/improvement/demo           # 5 prioritised opportunities + A/B/canary
+curl -X POST localhost:8080/api/improvement/demo           # 5 prioritised opportunities + A/B/canary
+curl -X POST localhost:8004/feedback -H 'Content-Type: application/json' \
+  -d '{"prompt":"q","response":"wrong","rating":1,"text":"inaccurate and slow"}'   # → labelled eval case
 ```
 
-End-to-end loop in one process: `python3 tests/e2e/test_quality_loop_e2e.py`.
+End-to-end loop in one process (no Docker): `python3 tests/e2e/test_quality_loop_e2e.py`.
 
 ---
 

@@ -1,37 +1,17 @@
-# Dev overlay: hot reload, source mounts, and Python services in watch mode.
+# Dev overlay: development env + a Vite dev server with hot reload for the frontend.
+# Usage: docker compose -f docker/docker-compose.yml -f docker/docker-compose.dev.yml up
 name: aiquality
 services:
   api:
-    build:
-      context: ../backend/AIQuality.API
     environment:
       ASPNETCORE_ENVIRONMENT: Development
-    volumes: ["../backend:/src"]
 
-  quality-evaluator:
-    build: ../python-services/quality-evaluator
-    env_file: ../.env
-
-  anomaly-detector:
-    build: ../python-services/anomaly-detector
-    env_file: ../.env
-
-  automated-rca:
-    build: ../python-services/automated-rca
-    env_file: ../.env
-
-  feedback-processor:
-    build: ../python-services/feedback-processor
-    env_file: ../.env
-
-  mcp-integration:
-    build: ../python-services/mcp-integration
-    env_file: ../.env
-    ports: ["9000:9000"]
-
+  # Replace the nginx-served bundle with the Vite dev server (HMR).
   frontend:
     image: node:22
     working_dir: /app
-    command: sh -c "npm install && npm run dev -- --host"
+    command: sh -c "npm install && npm run dev -- --host --port 5173"
+    environment:
+      VITE_API_BASE: http://localhost:8080
     volumes: ["../frontend/quality-platform:/app"]
     ports: ["5173:5173"]
