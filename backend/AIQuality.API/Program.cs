@@ -64,9 +64,12 @@ builder.Services.AddOpenTelemetry()
         // Exports OTLP/gRPC to the Jaeger collector (jaeger all-in-one exposes 4317).
         .AddOtlpExporter(o => o.Endpoint = new Uri(otlpEndpoint)));
 
-// Allow the Vite dev server to call the API.
+// Allow the dashboard to call the API: the nginx-served bundle (Docker, :3000) and the Vite dev
+// server (:5173). Override with CORS_ORIGINS (comma-separated) if you host it elsewhere.
+var corsOrigins = (builder.Configuration["CORS_ORIGINS"] ?? "http://localhost:3000,http://localhost:5173")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 builder.Services.AddCors(o => o.AddDefaultPolicy(p =>
-    p.WithOrigins("http://localhost:5173").AllowAnyHeader().AllowAnyMethod()));
+    p.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod()));
 
 var app = builder.Build();
 
